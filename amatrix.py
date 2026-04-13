@@ -1,5 +1,10 @@
 import sys
 import numpy as np
+from time import time
+import pandas as pd
+from tabulate import tabulate
+
+start_time = time()
 
 print()
 print("Program AMatrix")
@@ -70,10 +75,16 @@ def build_elem_dof(elem):
 for elem in elems.values():
     build_elem_dof(elem)
 
-# End program
-# ===============================================
-sys.exit()
-# ===============================================
+# Elem length:
+# -----------------------------------------------
+def elem_length(elem):
+    ni = nodes[elem["ni"]]
+    nf = nodes[elem["nf"]]
+    xi = ni["coord"][0]
+    yi = ni["coord"][1]
+    xf = nf["coord"][0]
+    yf = nf["coord"][1]
+    return np.sqrt((xf-xi)**2 + (yf-yi)**2)
 
 # Stiffness matrix for beam element:
 # -----------------------------------------------
@@ -95,84 +106,101 @@ def kbeam(ei,lx):
             k[i,j] = k[j,i]
     return k
 
-# Problem data
-# -----------------------------------------------
-# eis = np.array([
-#     45000,
-#     45000,
-#     45000
-# ], dtype=float)
-
-# lxs = np.array([
-#     6,
-#     2,
-#     2
-# ], dtype=float)
-
-# elem_dof = np.array([
-#     [1,2,3,4],
-#     [3,4,5,6],
-#     [5,6,7,8]
-# ], dtype=int)
-
-
 # Global stiffness matrix
 # -----------------------------------------------
-kgg = np.zeros((8,8), dtype=float)
-for elem in range(nelem):
-    kl = kbeam(eis[elem], lxs[elem])
-    for i in range(4):
-        for j in range(4):
-            ig = elem_dof[elem,i]
-            jg = elem_dof[elem,j]
-            kgg[ig-1,jg-1] += kl[i,j]
+def global_stiffness_matrix():
+    kff = np.zeros((ndof,ndof), dtype=float)
+    kfp = np.zeros((ndof,ndpr), dtype=float)
+    kpf = np.zeros((ndpr,ndof), dtype=float)
+    kpp = np.zeros((ndpr,ndpr), dtype=float)
+    for elem in elems.values():
+        kl = kbeam(elem["ei"], elem_length(elem))
+        for i in range(4):
+            for j in range(4):
+                if (elem["dof_type"][i] == "free") and (elem["dof_type"][j] == "free"):
+                    ig = elem["dof"][i]
+                    jg = elem["dof"][j]
+                    kff[ig,jg] += kl[i,j]
+                elif (elem["dof_type"][i] == "free") and (elem["dof_type"][j] == "fixed"):
+                    ig = elem["dof"][i]
+                    jg = elem["dof"][j]
+                    kfp[ig,jg] += kl[i,j]
+                elif (elem["dof_type"][i] == "fixed") and (elem["dof_type"][j] == "free"):
+                    ig = elem["dof"][i]
+                    jg = elem["dof"][j]
+                    kpf[ig,jg] += kl[i,j]
+                elif (elem["dof_type"][i] == "fixed") and (elem["dof_type"][j] == "fixed"):
+                    ig = elem["dof"][i]
+                    jg = elem["dof"][j]
+                    kpp[ig,jg] += kl[i,j]
+    return kff, kfp, kpf, kpp
 
-# Kre:
+kgg_ff, kgg_fp, kgg_pf, kgg_pp = global_stiffness_matrix()
+
+# Nodal force vector:
 # -----------------------------------------------
-tre = np.zeros((8,8), dtype=int)
-tre[0,3] = 1
-tre[1,4] = 1
-tre[2,5] = 1
-tre[3,7] = 1
-tre[4,0] = 1
-tre[5,1] = 1
-tre[6,2] = 1
-tre[7,6] = 1
+fgg_f = np.zeros(ndof, dtype=float)
+fn_p = np.zeros(ndpr, dtype=float)
 
-kgg_re = np.matmul(tre, np.matmul(kgg, tre.T))
+def build_force_vector(fgg_f, fn_p):
+    for node in nodes.values():
+        for i in range(2):
+            ig = node["dof"][i]
+            if node["dof_type"][i] == "free":
+                fgg_f[ig] += node["nodal_forces"][i]
+            elif node["dof_type"][i] == "fixed":
+                fn_p[ig] += node["nodal_forces"][i]
 
-kgg_ff = kgg_re[0:4,0:4].copy()
-kgg_fp= kgg_re[0:4,4:8].copy()
-kgg_pf = kgg_re[4:8,0:4].copy()
-kgg_pp = kgg_re[4:8,4:8].copy()
-
-# print()
-# print(f"kgg_ff =\n{kgg_ff}")
-# print()
-# print(f"kgg_fp =\n{kgg_fp}")
-# print()
-# print(f"kgg_pf =\n{kgg_pf}")
-# print()
-# print(f"kgg_pp =\n{kgg_pp}")
+build_force_vector(fgg_f, fn_p)
 
 # Displacements:
 # -----------------------------------------------
-ugg_p = np.zeros(4, dtype=float)
-fgg_f = np.array([80,-50,0,0], dtype=float)
+ugg_p = np.zeros(ndpr, dtype=float)
 b = fgg_f - np.matmul(kgg_fp, ugg_p)
 ugg_f = np.linalg.solve(kgg_ff, b)
-print()
-print(f"ugg_f =\n{ugg_f}")
 
-# Forces:
+def nodal_displacements(node):
+    ul = np.zeros(2, dtype=float)
+    for i in range(2):
+        ig = node["dof"][i]
+        if node["dof_type"][i] == "free":
+            ul[i] = ugg_f[ig]
+        elif node["dof_type"][i] == "fixed":
+            ul[i] = ugg_p[ig]
+    return ul
+
+print("Nodal Displacements:")
+lines = [(node_id, *nodal_displacements(node)) for node_id, node in nodes.items()]
+df = pd.DataFrame(lines, columns=["Node", "u1", "u2"])
+print(tabulate(df, headers="keys", tablefmt="fancy_grid", floatfmt=".3e", showindex=False))
+
+# End program
+# ===============================================
+end_time = time()
+print()
+print(f"Elapsed time = {end_time - start_time:.3f} seconds")
+print()
+print("Analysis completed succefully!!!")
+print()
+sys.exit()
+# ===============================================
+
+# Reactions:
 # -----------------------------------------------
 fgg_p = np.matmul(kgg_pf, ugg_f) + np.matmul(kgg_pp, ugg_p)
 print()
 print(f"fgg_p =\n{fgg_p}")
-
-# Reactions:
-# -----------------------------------------------
 fn_p = np.array([-60,-60,-60,0], dtype=float)
 rgg = fgg_p - fn_p
 print()
 print(f"rgg =\n{rgg}")
+
+# Member end Forces
+# -----------------------------------------------
+def local_displacements(elem):
+    ul = np.zeros(4, dtype=float)
+    # TODO
+    return ul
+
+def member_end_forces(elem):
+    pass
