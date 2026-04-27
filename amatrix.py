@@ -1,6 +1,7 @@
 import sys
-import numpy as np
 from time import time
+import json
+import numpy as np
 import pandas as pd
 from tabulate import tabulate
 
@@ -12,25 +13,14 @@ print("======= =======")
 
 # Model data:
 # -----------------------------------------------
-nodes = {
-    "A":{"coord":[0.,0.], "bc": ["fixed","fixed"],
-        "nodal_forces": [-60.,-60.]},
-    "B":{"coord":[6.,0.], "bc": ["fixed","free"],
-        "nodal_forces": [-60.,80.]},
-    "C":{"coord":[8.,0.], "bc": ["free","free"],
-        "nodal_forces": [-50.,0.]},
-    "D":{"coord":[10.,0.], "bc": ["fixed","free"],
-        "nodal_forces": [0.,0.]}
-}
+def load_file(file):
+    global nodes, elems
+    with open(file, 'r') as f:
+        data = json.load(f)
+        nodes = data["nodes"]
+        elems = data["elems"]
 
-elems = {
-    "b1":{"ei": 45000., "ni": "A", "nf": "B",
-        "fef": [60.,60.,60.,-60.]},
-    "b2":{"ei": 45000., "ni": "B", "nf": "C",
-        "fef": [0.,0.,0.,0.]},
-    "b3":{"ei": 45000., "ni": "C", "nf": "D",
-        "fef": [0.,0.,0.,0.]}
-}
+load_file(sys.argv[1])
 
 nnode = len(nodes)
 nelem = len(elems)
@@ -80,11 +70,9 @@ for elem in elems.values():
 def elem_length(elem):
     ni = nodes[elem["ni"]]
     nf = nodes[elem["nf"]]
-    xi = ni["coord"][0]
-    yi = ni["coord"][1]
-    xf = nf["coord"][0]
-    yf = nf["coord"][1]
-    return np.sqrt((xf-xi)**2 + (yf-yi)**2)
+    dx = nf["coord"][0] - ni["coord"][0]
+    dy = nf["coord"][1] - ni["coord"][1]
+    return np.sqrt(dx*dx + dy*dy)
 
 # Stiffness matrix for beam element:
 # -----------------------------------------------
@@ -117,21 +105,15 @@ def global_stiffness_matrix():
         kl = kbeam(elem["ei"], elem_length(elem))
         for i in range(4):
             for j in range(4):
+                ig = elem["dof"][i]
+                jg = elem["dof"][j]
                 if (elem["dof_type"][i] == "free") and (elem["dof_type"][j] == "free"):
-                    ig = elem["dof"][i]
-                    jg = elem["dof"][j]
                     kff[ig,jg] += kl[i,j]
                 elif (elem["dof_type"][i] == "free") and (elem["dof_type"][j] == "fixed"):
-                    ig = elem["dof"][i]
-                    jg = elem["dof"][j]
                     kfp[ig,jg] += kl[i,j]
                 elif (elem["dof_type"][i] == "fixed") and (elem["dof_type"][j] == "free"):
-                    ig = elem["dof"][i]
-                    jg = elem["dof"][j]
                     kpf[ig,jg] += kl[i,j]
                 elif (elem["dof_type"][i] == "fixed") and (elem["dof_type"][j] == "fixed"):
-                    ig = elem["dof"][i]
-                    jg = elem["dof"][j]
                     kpp[ig,jg] += kl[i,j]
     return kff, kfp, kpf, kpp
 
@@ -160,47 +142,65 @@ b = fgg_f - np.matmul(kgg_fp, ugg_p)
 ugg_f = np.linalg.solve(kgg_ff, b)
 
 def nodal_displacements(node):
-    ul = np.zeros(2, dtype=float)
+    ug = np.zeros(2, dtype=float)
     for i in range(2):
         ig = node["dof"][i]
         if node["dof_type"][i] == "free":
-            ul[i] = ugg_f[ig]
+            ug[i] = ugg_f[ig]
         elif node["dof_type"][i] == "fixed":
-            ul[i] = ugg_p[ig]
-    return ul
+            ug[i] = ugg_p[ig]
+    return ug
 
 print("Nodal Displacements:")
 lines = [(node_id, *nodal_displacements(node)) for node_id, node in nodes.items()]
-df = pd.DataFrame(lines, columns=["Node", "u1", "u2"])
+df = pd.DataFrame(lines, columns=["Node", "uY", "rZ"])
 print(tabulate(df, headers="keys", tablefmt="fancy_grid", floatfmt=".3e", showindex=False))
-
-# End program
-# ===============================================
-end_time = time()
-print()
-print(f"Elapsed time = {end_time - start_time:.3f} seconds")
-print()
-print("Analysis completed succefully!!!")
-print()
-sys.exit()
-# ===============================================
 
 # Reactions:
 # -----------------------------------------------
 fgg_p = np.matmul(kgg_pf, ugg_f) + np.matmul(kgg_pp, ugg_p)
-print()
-print(f"fgg_p =\n{fgg_p}")
-fn_p = np.array([-60,-60,-60,0], dtype=float)
 rgg = fgg_p - fn_p
+
+def nodal_reactions(node):
+    r = np.zeros(2, dtype=float)
+    for idl, dof in enumerate(node["dof"]):
+        if node["dof_type"][idl] == "free":
+            r[idl] = np.nan
+        elif node["dof_type"][idl] == "fixed":
+            r[idl] = rgg[dof]
+    return r
+
 print()
-print(f"rgg =\n{rgg}")
+print("Reactions:")
+
+lines = [(node_id, *nodal_reactions(node)) for node_id, node in nodes.items()]
+df = pd.DataFrame(lines, columns=["Node","rY","mZ"])
+df_print = df.astype(object).where(pd.notnull(df), None)
+print(tabulate(df_print, headers="keys", tablefmt="fancy_grid", floatfmt=".3f", missingval="-", showindex=False))
 
 # Member end Forces
 # -----------------------------------------------
 def local_displacements(elem):
-    ul = np.zeros(4, dtype=float)
-    # TODO
-    return ul
+    ni = nodes[elem["ni"]]
+    nf = nodes[elem["nf"]]
+    return np.append(nodal_displacements(ni), nodal_displacements(nf))
 
 def member_end_forces(elem):
-    pass
+    ei = elem["ei"]
+    kl = kbeam(ei, elem_length(elem))
+    ul = local_displacements(elem)
+    return np.matmul(kl, ul) + elem["fef"]
+
+print()
+print("Member End Forces:")
+lines = [(elem_id, *member_end_forces(elem)) for elem_id, elem in elems.items()]
+df = pd.DataFrame(lines, columns=["Element","fy1","mz1","fy2","mz2"])
+print(tabulate(df, headers="keys", tablefmt="fancy_grid", floatfmt=".3f", showindex=False))
+
+# End program
+# -----------------------------------------------
+end_time = time()
+print()
+print(f"Elapsed time = {end_time - start_time:.3f} seconds")
+print()
+print("Analysis completed succefully!!!\n")
