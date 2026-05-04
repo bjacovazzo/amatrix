@@ -1,0 +1,38 @@
+{
+    "bcs": {
+        "bc1": { "dof": ["fixed", "fixed"] },
+        "bc2": { "dof": ["fixed", "free"] }
+    },
+    "nodes": {
+        "A": { "coord": [0.0, 0.0], "bc": "bc1", "nodal_force": "nf1" },
+        "B": { "coord": [6.0, 0.0], "bc": "bc2", "nodal_force": "nf2" },
+        "C": { "coord": [8.0, 0.0], "nodal_force": "nf3" },
+        "D": { "coord": [10.0, 0.0], "bc": "bc2"  }
+    },
+    "materials": {
+        "steel": { "e": 2.0e8 }
+    },
+    "sections": {
+        "generic": { "iz": 2.25e-4 }
+    },
+    "beams": {
+        "b1": {
+            "ni": "A", "nf": "B",
+            "material": "steel", "section": "generic",
+            "fef": [60.0,60.0,60.0,-60.0]
+        },
+        "b2": {
+            "ni": "B", "nf": "C",
+            "material": "steel", "section": "generic"
+        },
+        "b3": {
+            "ni": "C", "nf": "D",
+            "material": "steel", "section": "generic"
+        }
+    },
+    "nodal_forces": {
+        "nf1": { "forces": [-60.0, -60.0] },
+        "nf2": { "forces": [-60.0, 80.0] },
+        "nf3": { "forces": [-50.0, 0.0] }
+    }
+}
