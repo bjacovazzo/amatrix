@@ -14,10 +14,12 @@ print("======= =======")
 # Model data:
 # -----------------------------------------------
 def load_file(file):
-    global nodes, elems
-    with open(file, 'r') as f:
+    global nodes, materials, sections, elems
+    with open(file, "r") as f:
         data = json.load(f)
         nodes = data["nodes"]
+        materials = data["materials"]
+        sections = data["sections"]
         elems = data["elems"]
 
 load_file(sys.argv[1])
@@ -46,7 +48,7 @@ def build_node_dof(node):
             ndpr += 1
     node["dof"] = dof_matrix
     node["dof_type"] = node["bc"]
-        
+
 for node in nodes.values():
     build_node_dof(node)
 
@@ -65,7 +67,7 @@ def build_elem_dof(elem):
 for elem in elems.values():
     build_elem_dof(elem)
 
-# Elem length:
+# Element length:
 # -----------------------------------------------
 def elem_length(elem):
     ni = nodes[elem["ni"]]
@@ -94,7 +96,7 @@ def kbeam(ei,lx):
             k[i,j] = k[j,i]
     return k
 
-# Global stiffness matrix
+# Global stiffness matrix:
 # -----------------------------------------------
 def global_stiffness_matrix():
     kff = np.zeros((ndof,ndof), dtype=float)
@@ -102,7 +104,10 @@ def global_stiffness_matrix():
     kpf = np.zeros((ndpr,ndof), dtype=float)
     kpp = np.zeros((ndpr,ndpr), dtype=float)
     for elem in elems.values():
-        kl = kbeam(elem["ei"], elem_length(elem))
+        em = materials[elem["material"]]["e"]
+        iz = sections[elem["section"]]["iz"]
+        ei = em * iz
+        kl = kbeam(ei, elem_length(elem))
         for i in range(4):
             for j in range(4):
                 ig = elem["dof"][i]
@@ -186,7 +191,9 @@ def local_displacements(elem):
     return np.append(nodal_displacements(ni), nodal_displacements(nf))
 
 def member_end_forces(elem):
-    ei = elem["ei"]
+    em = materials[elem["material"]]["e"]
+    iz = sections[elem["section"]]["iz"]
+    ei = em * iz
     kl = kbeam(ei, elem_length(elem))
     ul = local_displacements(elem)
     return np.matmul(kl, ul) + elem["fef"]
@@ -201,6 +208,5 @@ print(tabulate(df, headers="keys", tablefmt="fancy_grid", floatfmt=".3f", showin
 # -----------------------------------------------
 end_time = time()
 print()
-print(f"Elapsed time = {end_time - start_time:.3f} seconds")
-print()
 print("Analysis completed succefully!!!\n")
+print(f"Elapsed time = {end_time - start_time:.3f} seconds\n")
